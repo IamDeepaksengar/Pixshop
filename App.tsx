@@ -496,6 +496,9 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen text-gray-100 flex flex-col">
       <Header />
+      <div role="alert" className="bg-yellow-400 border-b-2 border-yellow-500 text-black text-center p-2 font-semibold text-sm z-40">
+          <span className="font-bold">TESTING MODE:</span> An API key has been added to the code. This is insecure and must be removed for production.
+      </div>
       <main className={`flex-grow w-full max-w-[1600px] mx-auto p-4 md:p-8 flex justify-center ${currentImage ? 'items-start' : 'items-center'}`}>
         {renderContent()}
       </main>

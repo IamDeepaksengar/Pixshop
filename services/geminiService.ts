@@ -5,6 +5,17 @@
 
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 
+// WARNING: API KEY ADDED FOR TESTING.
+// The following API key has been added directly to the code for testing purposes.
+// This is a major security risk and should not be used in a production environment.
+// For production, remove the hardcoded key and rely on the environment variable `process.env.API_KEY`.
+// Anyone with access to this code will be able to see and use this key.
+// DO NOT COMMIT THIS FILE WITH THE KEY TO A PUBLIC REPOSITORY.
+const TESTING_API_KEY = "b075a8d36b374209ac11df342fe68a73";
+
+const ai = new GoogleGenAI({ apiKey: TESTING_API_KEY || process.env.API_KEY! });
+
+
 // Helper function to convert a File object to a Gemini API Part
 const fileToPart = async (file: File): Promise<{ inlineData: { mimeType: string; data: string; } }> => {
     const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -76,7 +87,6 @@ export const generateEditedImage = async (
     hotspot: { x: number, y: number }
 ): Promise<string> => {
     console.log('Starting generative edit at:', hotspot);
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
     
     const originalImagePart = await fileToPart(originalImage);
     const prompt = `You are an expert photo editor AI. Your task is to perform a natural, localized edit on the provided image based on the user's request.
@@ -115,7 +125,6 @@ export const generateFilteredImage = async (
     filterPrompt: string,
 ): Promise<string> => {
     console.log(`Starting filter generation: ${filterPrompt}`);
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
     
     const originalImagePart = await fileToPart(originalImage);
     const prompt = `You are an expert photo editor AI. Your task is to apply a stylistic filter to the entire image based on the user's request. Do not change the composition or content, only apply the style.
@@ -149,7 +158,6 @@ export const generateAdjustedImage = async (
     adjustmentPrompt: string,
 ): Promise<string> => {
     console.log(`Starting global adjustment generation: ${adjustmentPrompt}`);
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
     
     const originalImagePart = await fileToPart(originalImage);
     const prompt = `You are an expert photo editor AI. Your task is to perform a natural, global adjustment to the entire image based on the user's request.
