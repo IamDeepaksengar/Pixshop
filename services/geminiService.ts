@@ -3,78 +3,72 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 
-// --- Claid.ai API Integration ---
-// This service has been rewritten to use the Claid.ai API instead of Google Gemini.
-// The implementation below simulates API calls to plausible Claid.ai endpoints.
+// --- Claid.ai API Integration via a Server-Side Proxy ---
+// This service now sends requests to a Netlify serverless function
+// which acts as a proxy to the Claid.ai API. This is necessary to
+// avoid browser CORS (Cross-Origin Resource Sharing) errors.
 
-// WARNING: DO NOT USE HARDCODED API KEYS IN PRODUCTION
-// This key has been added for testing purposes only, as requested by the user.
-// For any production environment, this key should be moved to a secure
-// environment variable and accessed via `process.env`.
-const CLAID_API_KEY = 'b075a8d36b374209ac11df342fe68a73';
-const CLAID_API_BASE_URL = 'https://api.claid.ai/v1/image-processing'; // Using a plausible endpoint for demonstration
+const PROXY_ENDPOINT = '/.netlify/functions/claid-proxy';
+
+// Helper function to convert a File object to a Base64 encoded string.
+const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = error => reject(error);
+    });
+};
+
 
 /**
- * A helper function to call the Claid.ai API.
- * This has been updated to use the correct authentication header.
+ * A helper function to call our server-side proxy which then calls the Claid.ai API.
  * @param imageFile The image to process.
  * @param payload The operation and parameters for the API call.
  * @returns A promise that resolves to the data URL of the processed image.
  */
-const callClaidApi = async (
+const callClaidApiProxy = async (
     imageFile: File,
     payload: Record<string, any>
 ): Promise<string> => {
-    const formData = new FormData();
-    // Assuming the API takes the image and a JSON payload with instructions.
-    formData.append('source_image', imageFile);
-    formData.append('instructions', JSON.stringify(payload));
+    
+    const imageBase64 = await fileToBase64(imageFile);
 
-    console.log('Sending request to Claid.ai with payload:', payload);
-
-    const response = await fetch(CLAID_API_BASE_URL, {
+    const response = await fetch(PROXY_ENDPOINT, {
         method: 'POST',
         headers: {
-            // CORRECTED: Claid.ai requires a specific Authorization header format.
-            // This was the likely source of the previous error.
-            'Authorization': `Claid-API-Key ${CLAID_API_KEY}`,
+            'Content-Type': 'application/json',
         },
-        body: formData,
+        body: JSON.stringify({
+            // The proxy expects the image as a base64 string and the instructions.
+            imageBase64,
+            instructions: payload,
+        }),
     });
 
     if (!response.ok) {
         let errorBody;
         try {
-            // Try to parse a JSON error response from the API.
             errorBody = await response.json();
         } catch (e) {
-            // If it's not JSON, read it as text.
             errorBody = await response.text();
         }
-        console.error('Claid.ai API Error:', { status: response.status, body: errorBody });
-        const errorMessage = typeof errorBody === 'object' && errorBody?.message
-            ? errorBody.message
+        console.error('API Proxy Error:', { status: response.status, body: errorBody });
+        const errorMessage = typeof errorBody === 'object' && errorBody?.error
+            ? errorBody.error
             : JSON.stringify(errorBody);
-        // Provide a clearer error message to the user.
-        throw new Error(`The AI service returned an error. Please check your API key and prompt. Details: ${errorMessage}`);
+        
+        throw new Error(`The AI service returned an error. ${errorMessage}`);
     }
 
-    const imageBlob = await response.blob();
+    const result = await response.json();
     
-    // Validate that the API returned an image.
-    if (!imageBlob.type.startsWith('image/')) {
-        const errorText = await imageBlob.text();
-        console.error('API Error: The server did not return a valid image. Response:', errorText);
-        throw new Error(`The API did not return a valid image. Please check the API key and prompt.`);
+    if (!result.imageData) {
+         console.error('API Error: The proxy did not return valid image data.');
+         throw new Error(`The API did not return a valid image. Please check the API key and prompt.`);
     }
-    
-    // Convert the resulting image blob to a Data URL to display in the app.
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(imageBlob);
-    });
+
+    return result.imageData;
 };
 
 /**
@@ -89,7 +83,7 @@ export const generateEditedImage = async (
     userPrompt: string,
     hotspot: { x: number, y: number }
 ): Promise<string> => {
-    return callClaidApi(originalImage, {
+    return callClaidApiProxy(originalImage, {
         operation: 'generative_edit',
         prompt: userPrompt,
         focus_point: hotspot,
@@ -106,7 +100,7 @@ export const generateFilteredImage = async (
     originalImage: File,
     filterPrompt: string,
 ): Promise<string> => {
-    return callClaidApi(originalImage, {
+    return callClaidApiProxy(originalImage, {
         operation: 'generative_filter',
         prompt: filterPrompt,
     });
@@ -122,7 +116,7 @@ export const generateAdjustedImage = async (
     originalImage: File,
     adjustmentPrompt: string,
 ): Promise<string> => {
-    return callClaidApi(originalImage, {
+    return callClaidApiProxy(originalImage, {
         operation: 'generative_adjustment',
         prompt: adjustmentPrompt,
     });
