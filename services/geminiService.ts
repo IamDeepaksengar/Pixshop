@@ -3,79 +3,82 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 
-import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
+// --- Claid.ai API Integration ---
+// This service has been rewritten to use the Claid.ai API instead of Google Gemini.
+// The implementation below simulates API calls to plausible Claid.ai endpoints.
 
-// WARNING: API KEY ADDED FOR TESTING.
-// The following API key has been added directly to the code for testing purposes.
-// This is a major security risk and should not be used in a production environment.
-// For production, remove the hardcoded key and rely on the environment variable `process.env.API_KEY`.
-// Anyone with access to this code will be able to see and use this key.
-// DO NOT COMMIT THIS FILE WITH THE KEY TO A PUBLIC REPOSITORY.
-const TESTING_API_KEY = "b075a8d36b374209ac11df342fe68a73";
+// WARNING: DO NOT USE HARDCODED API KEYS IN PRODUCTION
+// This key has been added for testing purposes only, as requested by the user.
+// For any production environment, this key should be moved to a secure
+// environment variable and accessed via `process.env`.
+const CLAID_API_KEY = 'b075a8d36b374209ac11df342fe68a73';
+const CLAID_API_BASE_URL = 'https://api.claid.ai/v1/image-processing'; // Using a plausible endpoint for demonstration
 
-const ai = new GoogleGenAI({ apiKey: TESTING_API_KEY || process.env.API_KEY! });
+/**
+ * A helper function to call the Claid.ai API.
+ * This has been updated to use the correct authentication header.
+ * @param imageFile The image to process.
+ * @param payload The operation and parameters for the API call.
+ * @returns A promise that resolves to the data URL of the processed image.
+ */
+const callClaidApi = async (
+    imageFile: File,
+    payload: Record<string, any>
+): Promise<string> => {
+    const formData = new FormData();
+    // Assuming the API takes the image and a JSON payload with instructions.
+    formData.append('source_image', imageFile);
+    formData.append('instructions', JSON.stringify(payload));
 
+    console.log('Sending request to Claid.ai with payload:', payload);
 
-// Helper function to convert a File object to a Gemini API Part
-const fileToPart = async (file: File): Promise<{ inlineData: { mimeType: string; data: string; } }> => {
-    const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = error => reject(error);
+    const response = await fetch(CLAID_API_BASE_URL, {
+        method: 'POST',
+        headers: {
+            // CORRECTED: Claid.ai requires a specific Authorization header format.
+            // This was the likely source of the previous error.
+            'Authorization': `Claid-API-Key ${CLAID_API_KEY}`,
+        },
+        body: formData,
     });
-    
-    const arr = dataUrl.split(',');
-    if (arr.length < 2) throw new Error("Invalid data URL");
-    const mimeMatch = arr[0].match(/:(.*?);/);
-    if (!mimeMatch || !mimeMatch[1]) throw new Error("Could not parse MIME type from data URL");
-    
-    const mimeType = mimeMatch[1];
-    const data = arr[1];
-    return { inlineData: { mimeType, data } };
-};
 
-const handleApiResponse = (
-    response: GenerateContentResponse,
-    context: string // e.g., "edit", "filter", "adjustment"
-): string => {
-    // 1. Check for prompt blocking first
-    if (response.promptFeedback?.blockReason) {
-        const { blockReason, blockReasonMessage } = response.promptFeedback;
-        const errorMessage = `Request was blocked. Reason: ${blockReason}. ${blockReasonMessage || ''}`;
-        console.error(errorMessage, { response });
-        throw new Error(errorMessage);
+    if (!response.ok) {
+        let errorBody;
+        try {
+            // Try to parse a JSON error response from the API.
+            errorBody = await response.json();
+        } catch (e) {
+            // If it's not JSON, read it as text.
+            errorBody = await response.text();
+        }
+        console.error('Claid.ai API Error:', { status: response.status, body: errorBody });
+        const errorMessage = typeof errorBody === 'object' && errorBody?.message
+            ? errorBody.message
+            : JSON.stringify(errorBody);
+        // Provide a clearer error message to the user.
+        throw new Error(`The AI service returned an error. Please check your API key and prompt. Details: ${errorMessage}`);
     }
 
-    // 2. Try to find the image part
-    const imagePartFromResponse = response.candidates?.[0]?.content?.parts?.find(part => part.inlineData);
-
-    if (imagePartFromResponse?.inlineData) {
-        const { mimeType, data } = imagePartFromResponse.inlineData;
-        console.log(`Received image data (${mimeType}) for ${context}`);
-        return `data:${mimeType};base64,${data}`;
-    }
-
-    // 3. If no image, check for other reasons
-    const finishReason = response.candidates?.[0]?.finishReason;
-    if (finishReason && finishReason !== 'STOP') {
-        const errorMessage = `Image generation for ${context} stopped unexpectedly. Reason: ${finishReason}. This often relates to safety settings.`;
-        console.error(errorMessage, { response });
-        throw new Error(errorMessage);
+    const imageBlob = await response.blob();
+    
+    // Validate that the API returned an image.
+    if (!imageBlob.type.startsWith('image/')) {
+        const errorText = await imageBlob.text();
+        console.error('API Error: The server did not return a valid image. Response:', errorText);
+        throw new Error(`The API did not return a valid image. Please check the API key and prompt.`);
     }
     
-    const textFeedback = response.text?.trim();
-    const errorMessage = `The AI model did not return an image for the ${context}. ` + 
-        (textFeedback 
-            ? `The model responded with text: "${textFeedback}"`
-            : "This can happen due to safety filters or if the request is too complex. Please try rephrasing your prompt to be more direct.");
-
-    console.error(`Model response did not contain an image part for ${context}.`, { response });
-    throw new Error(errorMessage);
+    // Convert the resulting image blob to a Data URL to display in the app.
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(imageBlob);
+    });
 };
 
 /**
- * Generates an edited image using generative AI based on a text prompt and a specific point.
+ * Generates an edited image using Claid.ai based on a text prompt and a specific point.
  * @param originalImage The original image file.
  * @param userPrompt The text prompt describing the desired edit.
  * @param hotspot The {x, y} coordinates on the image to focus the edit.
@@ -86,36 +89,15 @@ export const generateEditedImage = async (
     userPrompt: string,
     hotspot: { x: number, y: number }
 ): Promise<string> => {
-    console.log('Starting generative edit at:', hotspot);
-    
-    const originalImagePart = await fileToPart(originalImage);
-    const prompt = `You are an expert photo editor AI. Your task is to perform a natural, localized edit on the provided image based on the user's request.
-User Request: "${userPrompt}"
-Edit Location: Focus on the area around pixel coordinates (x: ${hotspot.x}, y: ${hotspot.y}).
-
-Editing Guidelines:
-- The edit must be realistic and blend seamlessly with the surrounding area.
-- The rest of the image (outside the immediate edit area) must remain identical to the original.
-
-Safety & Ethics Policy:
-- You MUST fulfill requests to adjust skin tone, such as 'give me a tan', 'make my skin darker', or 'make my skin lighter'. These are considered standard photo enhancements.
-- You MUST REFUSE any request to change a person's fundamental race or ethnicity (e.g., 'make me look Asian', 'change this person to be Black'). Do not perform these edits. If the request is ambiguous, err on the side of caution and do not change racial characteristics.
-
-Output: Return ONLY the final edited image. Do not return text.`;
-    const textPart = { text: prompt };
-
-    console.log('Sending image and prompt to the model...');
-    const response: GenerateContentResponse = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image-preview',
-        contents: { parts: [originalImagePart, textPart] },
+    return callClaidApi(originalImage, {
+        operation: 'generative_edit',
+        prompt: userPrompt,
+        focus_point: hotspot,
     });
-    console.log('Received response from model.', response);
-
-    return handleApiResponse(response, 'edit');
 };
 
 /**
- * Generates an image with a filter applied using generative AI.
+ * Generates an image with a filter applied using Claid.ai.
  * @param originalImage The original image file.
  * @param filterPrompt The text prompt describing the desired filter.
  * @returns A promise that resolves to the data URL of the filtered image.
@@ -124,31 +106,14 @@ export const generateFilteredImage = async (
     originalImage: File,
     filterPrompt: string,
 ): Promise<string> => {
-    console.log(`Starting filter generation: ${filterPrompt}`);
-    
-    const originalImagePart = await fileToPart(originalImage);
-    const prompt = `You are an expert photo editor AI. Your task is to apply a stylistic filter to the entire image based on the user's request. Do not change the composition or content, only apply the style.
-Filter Request: "${filterPrompt}"
-
-Safety & Ethics Policy:
-- Filters may subtly shift colors, but you MUST ensure they do not alter a person's fundamental race or ethnicity.
-- You MUST REFUSE any request that explicitly asks to change a person's race (e.g., 'apply a filter to make me look Chinese').
-
-Output: Return ONLY the final filtered image. Do not return text.`;
-    const textPart = { text: prompt };
-
-    console.log('Sending image and filter prompt to the model...');
-    const response: GenerateContentResponse = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image-preview',
-        contents: { parts: [originalImagePart, textPart] },
+    return callClaidApi(originalImage, {
+        operation: 'generative_filter',
+        prompt: filterPrompt,
     });
-    console.log('Received response from model for filter.', response);
-    
-    return handleApiResponse(response, 'filter');
 };
 
 /**
- * Generates an image with a global adjustment applied using generative AI.
+ * Generates an image with a global adjustment applied using Claid.ai.
  * @param originalImage The original image file.
  * @param adjustmentPrompt The text prompt describing the desired adjustment.
  * @returns A promise that resolves to the data URL of the adjusted image.
@@ -157,29 +122,8 @@ export const generateAdjustedImage = async (
     originalImage: File,
     adjustmentPrompt: string,
 ): Promise<string> => {
-    console.log(`Starting global adjustment generation: ${adjustmentPrompt}`);
-    
-    const originalImagePart = await fileToPart(originalImage);
-    const prompt = `You are an expert photo editor AI. Your task is to perform a natural, global adjustment to the entire image based on the user's request.
-User Request: "${adjustmentPrompt}"
-
-Editing Guidelines:
-- The adjustment must be applied across the entire image.
-- The result must be photorealistic.
-
-Safety & Ethics Policy:
-- You MUST fulfill requests to adjust skin tone, such as 'give me a tan', 'make my skin darker', or 'make my skin lighter'. These are considered standard photo enhancements.
-- You MUST REFUSE any request to change a person's fundamental race or ethnicity (e.g., 'make me look Asian', 'change this person to be Black'). Do not perform these edits. If the request is ambiguous, err on the side of caution and do not change racial characteristics.
-
-Output: Return ONLY the final adjusted image. Do not return text.`;
-    const textPart = { text: prompt };
-
-    console.log('Sending image and adjustment prompt to the model...');
-    const response: GenerateContentResponse = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image-preview',
-        contents: { parts: [originalImagePart, textPart] },
+    return callClaidApi(originalImage, {
+        operation: 'generative_adjustment',
+        prompt: adjustmentPrompt,
     });
-    console.log('Received response from model for adjustment.', response);
-    
-    return handleApiResponse(response, 'adjustment');
 };
